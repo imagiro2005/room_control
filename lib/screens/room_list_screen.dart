@@ -1,61 +1,109 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 
-import '../models/room.dart';
+import '../models/room_state.dart';
+import '../services/iot_service.dart';
+import '../widgets/failure_switch.dart';
 import '../widgets/room_card.dart';
 import 'room_control_screen.dart';
 
-/// Màn hình danh sách phòng - nơi GIỮ TRẠNG THÁI của toàn bộ phòng.
+/// SMART WIDGET (State Holder) - Lifting State Up:
+/// danh sách trạng thái các phòng được giữ ở đây (tổ tiên chung gần nhất),
+/// các widget con (RoomCard...) chỉ nhận dữ liệu và bắn callback lên.
 class const RoomListScreen({super.key}) extends StatefulWidget {
   @override
   State<RoomListScreen> createState() => _RoomListScreenState();
 }
 
 class _RoomListScreenState extends State<RoomListScreen> {
-  final List<Room> _rooms = Room.sampleRooms();
+  List<RoomState> _rooms = List.of(RoomState.samples);
+
+  RoomState _byId(String id) => _rooms.firstWhere((r) => r.id == id);
+
+  /// Thay State cũ bằng State mới (bất biến) rồi setState để rebuild.
+  void _replace(RoomState updated) {
+    setState(() {
+      _rooms = [for (final r in _rooms) r.id == updated.id ? updated : r];
+    });
+  }
 
   void _snack(String message, {SnackBarAction? action}) {
-    final messenger = ScaffoldMessenger.of(context);
-    messenger
+    ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
       ..showSnackBar(SnackBar(
         content: Text(message),
-        duration: const Duration(seconds: 2),
+        behavior: SnackBarBehavior.floating,
+        duration: const Duration(seconds: 3),
         action: action,
       ));
   }
 
-  // ---- Các hàm xử lý sự kiện ----
+  /// OPTIMISTIC UI (slide 24, 27):
+  /// 1) Haptic  2) đổi UI ngay  3) gọi API ngầm  4) lỗi -> kiểm tra mounted -> rollback.
+  Future<void> _apply(
+    String roomId,
+    String command, {
+    required RoomState Function(RoomState current) change,
+    required RoomState Function(RoomState current) rollback,
+    String? message,
+    SnackBarAction? action,
+  }) async {
+    HapticFeedback.lightImpact();
+    _replace(change(_byId(roomId)));
+    if (message != null) _snack(message, action: action);
+    try {
+      await iotService.sendCommand(roomId, command);
+    } catch (_) {
+      if (!mounted) return; // Async gap
+      _replace(rollback(_byId(roomId)));
+      _snack('Lỗi kết nối, đã hoàn tác!');
+    }
+  }
 
-  /// Sự kiện Switch.onChanged từ RoomCard -> cập nhật trạng thái bằng setState.
-  void _onLightChanged(Room room, bool value) {
-    final old = room.lightOn;
-    setState(() => room.lightOn = value);
-    _snack(
-      '${room.name}: đèn ${value ? 'BẬT' : 'TẮT'}',
+  // ---- Các hàm xử lý sự kiện (nhận Callback từ widget con) ----
+
+  void _toggleLight(RoomState room, bool value) {
+    final previous = room.isLightOn;
+    _apply(
+      room.id,
+      value ? 'LIGHT_ON' : 'LIGHT_OFF',
+      change: (r) => r.copyWith(isLightOn: value),
+      rollback: (r) => r.copyWith(isLightOn: previous),
+      message: '${room.name}: đèn ${value ? 'BẬT' : 'TẮT'}',
       action: SnackBarAction(
-        label: 'Hoàn tác',
-        onPressed: () => setState(() => room.lightOn = old),
+        label: 'HOÀN TÁC',
+        onPressed: () => _toggleLight(_byId(room.id), previous),
       ),
     );
   }
 
-  /// Sự kiện onTap: mở màn hình điều khiển chi tiết.
-  /// Truyền callback onChanged để màn hình con báo ngược lại khi dữ liệu đổi.
-  Future<void> _openRoom(Room room) async {
+  void _turnOffRoom(RoomState room) {
+    final prevLight = room.isLightOn;
+    final prevAc = room.isAcOn;
+    _apply(
+      room.id,
+      'ALL_OFF',
+      change: (r) => r.turnedOffAll(),
+      rollback: (r) => r.copyWith(isLightOn: prevLight, isAcOn: prevAc),
+    );
+  }
+
+  /// onTap: mở màn hình điều khiển chi tiết, truyền callback để nhận State mới.
+  Future<void> _openRoom(RoomState room) async {
     await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => RoomControlScreen(
           room: room,
-          onChanged: () {
-            if (mounted) setState(() {});
+          onChanged: (updated) {
+            if (mounted) _replace(updated);
           },
         ),
       ),
     );
   }
 
-  /// Sự kiện onLongPress: mở menu thao tác nhanh.
-  void _showQuickActions(Room room) {
+  /// onLongPress: menu thao tác nhanh.
+  void _showQuickActions(RoomState room) {
     showModalBottomSheet<void>(
       context: context,
       builder: (sheetContext) => SafeArea(
@@ -63,8 +111,7 @@ class _RoomListScreenState extends State<RoomListScreen> {
           mainAxisSize: MainAxisSize.min,
           children: [
             ListTile(
-              title: Text(room.name,
-                  style: Theme.of(context).textTheme.titleMedium),
+              title: Text(room.name, style: Theme.of(context).textTheme.titleMedium),
               subtitle: const Text('Thao tác nhanh'),
             ),
             ListTile(
@@ -72,7 +119,7 @@ class _RoomListScreenState extends State<RoomListScreen> {
               title: const Text('Tắt tất cả thiết bị'),
               onTap: () {
                 Navigator.pop(sheetContext);
-                setState(room.turnOffAll);
+                _turnOffRoom(room);
                 _snack('Đã tắt tất cả thiết bị ở ${room.name}');
               },
             ),
@@ -81,8 +128,7 @@ class _RoomListScreenState extends State<RoomListScreen> {
               title: const Text('Bật đèn'),
               onTap: () {
                 Navigator.pop(sheetContext);
-                setState(() => room.lightOn = true);
-                _snack('Đã bật đèn ${room.name}');
+                _toggleLight(room, true);
               },
             ),
           ],
@@ -109,12 +155,10 @@ class _RoomListScreenState extends State<RoomListScreen> {
         ],
       ),
     );
-    if (ok == true) {
-      setState(() {
-        for (final r in _rooms) {
-          r.turnOffAll();
-        }
-      });
+    if (ok == true && mounted) {
+      for (final room in _rooms) {
+        _turnOffRoom(room);
+      }
       _snack('Đã tắt tất cả thiết bị');
     }
   }
@@ -141,17 +185,20 @@ class _RoomListScreenState extends State<RoomListScreen> {
             Align(
               alignment: Alignment.centerLeft,
               child: Padding(
-                padding: const EdgeInsets.only(left: 4, bottom: 8),
+                padding: const EdgeInsets.only(left: 4, bottom: 4),
                 child: Text(
                   'Đang bật $total thiết bị  •  Chạm: mở phòng  •  Nhấn giữ: thao tác nhanh',
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
               ),
             ),
+            FailureSwitch(
+              value: iotService.simulateFailure,
+              onChanged: (v) => setState(() => iotService.simulateFailure = v),
+            ),
             Expanded(
               child: GridView.builder(
                 itemCount: _rooms.length,
-                // Ô tự co giãn theo bề rộng màn hình (web không bị ô quá to)
                 gridDelegate: const SliverGridDelegateWithMaxCrossAxisExtent(
                   maxCrossAxisExtent: 240,
                   childAspectRatio: 1.15,
@@ -164,7 +211,7 @@ class _RoomListScreenState extends State<RoomListScreen> {
                     room: room,
                     onTap: () => _openRoom(room),
                     onLongPress: () => _showQuickActions(room),
-                    onLightChanged: (v) => _onLightChanged(room, v),
+                    onLightChanged: (v) => _toggleLight(room, v),
                   );
                 },
               ),

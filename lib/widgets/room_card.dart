@@ -1,16 +1,14 @@
 import 'package:flutter/material.dart';
 
-import '../models/room.dart';
+import '../models/room_state.dart';
 
-/// Thẻ phòng ở màn hình danh sách.
-/// - InkWell: bắt onTap / onLongPress và có hiệu ứng ripple.
-/// - Callback: widget con KHÔNG tự giữ trạng thái, chỉ "báo" sự kiện ra ngoài
-///   qua onTap, onLongPress, onLightChanged.
-/// - Hình minh họa mờ: icon lớn làm "watermark" + ánh sáng/biểu tượng thiết bị
-///   thay đổi theo trạng thái (đèn bật -> có quầng sáng, điều hòa bật -> có icon tuyết).
+/// Thẻ phòng ở màn hình danh sách (Dumb Widget).
+/// - InkWell: onTap / onLongPress + hiệu ứng ripple (cần Material tổ tiên: Card).
+/// - Lớp quầng sáng dùng Ink (không dùng Container có màu) để KHÔNG che mất ripple
+///   -> tránh "cạm bẫy kinh điển" ở slide 11.
 class const RoomCard({
   super.key,
-  required final Room room,
+  required final RoomState room,
   required final VoidCallback onTap,
   required final VoidCallback onLongPress,
   required final ValueChanged<bool> onLightChanged,
@@ -28,10 +26,10 @@ class const RoomCard({
         onLongPress: onLongPress,
         child: Stack(
           children: [
-            // 1) Quầng sáng ấm khi đèn bật (mờ, phản ánh trạng thái)
-            if (room.lightOn)
+            // Quầng sáng ấm khi đèn bật (phản ánh State lên UI)
+            if (room.isLightOn)
               Positioned.fill(
-                child: DecoratedBox(
+                child: Ink(
                   decoration: BoxDecoration(
                     gradient: RadialGradient(
                       center: Alignment.topRight,
@@ -45,7 +43,7 @@ class const RoomCard({
                 ),
               ),
 
-            // 2) Hình minh họa phòng - icon lớn, mờ, nằm góc dưới phải
+            // Hình minh họa phòng - icon lớn, mờ
             Positioned(
               right: -18,
               bottom: -18,
@@ -56,8 +54,8 @@ class const RoomCard({
               ),
             ),
 
-            // 3) Icon tuyết mờ khi điều hòa đang bật
-            if (room.acOn)
+            // Icon tuyết mờ khi điều hòa bật
+            if (room.isAcOn)
               Positioned(
                 right: 14,
                 top: 52,
@@ -68,7 +66,6 @@ class const RoomCard({
                 ),
               ),
 
-            // 4) Nội dung chính
             Padding(
               padding: const EdgeInsets.all(14),
               child: Column(
@@ -79,16 +76,13 @@ class const RoomCard({
                       Icon(room.icon, size: 30),
                       const Spacer(),
                       Switch(
-                        value: room.lightOn,
-                        onChanged: onLightChanged, // callback trả giá trị mới lên cha
+                        value: room.isLightOn,
+                        onChanged: onLightChanged, // ValueChanged<bool>
                       ),
                     ],
                   ),
                   const Spacer(),
-                  Text(
-                    room.name,
-                    style: Theme.of(context).textTheme.titleMedium,
-                  ),
+                  Text(room.name, style: Theme.of(context).textTheme.titleMedium),
                   const SizedBox(height: 2),
                   Text(
                     active ? '${room.activeDevices} thiết bị đang bật' : 'Đang tắt',

@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 
-import '../models/room.dart';
+import '../models/room_state.dart';
 
 /// Điều khiển điều hòa: IconButton.onPressed tăng/giảm nhiệt độ.
-/// Khi onPressed = null thì nút tự bị vô hiệu hóa -> UI phản ánh trạng thái.
+/// onPressed == null -> nút tự mờ đi (ngữ nghĩa Disabled của Material, slide 10).
 class const TemperatureControl({
   super.key,
   required final bool enabled,
@@ -13,8 +13,8 @@ class const TemperatureControl({
 }) extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
-    final canDown = enabled && temperature > Room.minTemp;
-    final canUp = enabled && temperature < Room.maxTemp;
+    final canDown = enabled && temperature > RoomState.minTemp;
+    final canUp = enabled && temperature < RoomState.maxTemp;
 
     return Row(
       mainAxisAlignment: MainAxisAlignment.center,
